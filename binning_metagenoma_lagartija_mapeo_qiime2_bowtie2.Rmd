@@ -1,0 +1,427 @@
+---
+title: "Script binning de lagartijas en diferente estadío reproductivo"
+author: "Elizabeth Selene Gómez Acata"
+date: "2024-06-19"
+output:
+   html_document: default
+   pdf_document: default
+---
+
+```{r xaringan-themer, include=FALSE, warning=FALSE, eval=TRUE,echo=FALSE}
+library(xaringanthemer)
+style_mono_accent(
+  base_color = "#556B2F",
+  header_font_google = google_font("Open Sans"),
+  text_font_google= google_font("Open Sans", "400", "400i"),
+  text_font_size = "1.2rem",
+)
+xaringanExtra::use_clipboard()
+```
+
+------------------------------------------------------------------------
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Paso 1. Descargar las secuencias en el servidor o equipo de cómputo
+
+Una vez que te ha llegado el correo de confirmación de que tus secuencias están listas para ser descargadas realiza los siguientes pasos:
+
+```{bash, eval=FALSE}
+#Crea una carpeta para el proyecto
+mkdir nombre_proyecto
+
+#Ingresa a la carpeta
+cd nombre_proyecto
+
+#Crea la carpeta donde se van a almacenar las secuencias
+mkdir secuencias_crudas_nombre_del_proyecto
+
+#Ingresa a la carpeta
+cd secuencias_crudas_nombre_del_proyecto
+
+#Descarga las secuencias
+wget enlace_de_descarga
+```
+
+## Paso 2. Verificación de la calidad de las secuencias
+
+Utiliza Fastqc para verificar la calidad de las secuencias, en caso de que no lo tengas instalado sigue las instrucciones del siguiente enlace:
+
+[**fastqc**](https://www.bioinformatics.babraham.ac.uk/projects/fastqc/)
+
+Puedes revisar los archivos de tus secuencias utilizando el visualizador o la línea de comandos.
+
+Para línea de comandos utiliza el siguiente código:
+
+```{bash, eval=FALSE}
+Fastqc nombre_archivo.fastq.gz
+```
+
+Nota: este paso se realiza para cada archivo.fastq de cada muestra, en caso de ser secuencias paired-end, se realiza tanto para el R1 como el R2.
+
+Revisar:
+
+-   Per base sequence quality
+
+-   Per tile sequence quality
+
+-   Per sequence quality scores
+
+-   Per base sequence content
+
+-   Per sequence GC content
+
+-   Adapter content
+
+Uno de los puntos más importantes es revisar la ausencia o presencia de adaptadores de la plataforma de secuenciación.
+
+## Paso 3. Mapeo con genomas de referencia para remover lecturas de hospedero y de humano
+
+Una vez que verificamos la calidad de las secuencias, es necesario revisar que no contengan:
+
+I.  **Secuencias de genoma humano** (en caso de que se haya trabajado con secuencias ambientales, ejemplo: agua, suelo, sedimento, planta, etc.).
+II.  **Secuencias del genoma del hospedero** (en caso de que las muestras sean de animales o plantas). Para éste caso de lagartijas.
+
+Se debe descargar las secuencias de los genomas de referencia del NCBI, de preferencia del RefSeq ya que son genomas que ya están anotados y curados.
+
+```{bash, eval=FALSE}
+#Crea una carpeta para los genomas de referencia
+mkdir genomas_de_referencia
+
+#Ingresa a la carpeta
+cd genomas_de_referencia
+
+#Descarga los genomas en la carpeta de genomas
+wget enlace_de_genomas
+
+```
+
+También puedes descargar las secuencias de los genomas de referencia en los siguientes enlaces:
+
+[**Genoma humano**](https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_000001405.40/)
+
+[**Genomas de *Sceloporus***](https://www.ncbi.nlm.nih.gov/genome/?term=txid8518%5BOrganism:exp%5D)
+
+Si bien el mapeo se puede hacer con diferentes herramientas informáticas como Bbmap, sugerimos utilizar Bowtie2 por ser más eficiente al momento de remover secuencias de hospedero.
+
+Ya sea que instales Bowtie2 o que utilices el que está instalado en QIIME2
+
+### **QIIME 2**
+
+Para instalar QIIME2 da click en el siguiente enlace y sigue las instrucciones:
+
+[**QIIME2**](https://docs.qiime2.org/2023.9/install/)
+
+Para hacer el mapeo sigue los siguientes pasos:
+
+a. Importar el genoma de referencia a QIIME 2 y construir el index para Bowtie2
+
+En caso de que el archivo del genoma contenga mayúsculas y minúsculas, es necesario cambiar todas las letras a mayúsculas para que lo detecte de acuerdo al sistema IUPAC, para eso utilizar el siguiente código:
+
+```{bash, eval=FALSE}
+#Cambiar minúsculas por mayúsculas en el archivo fasta
+awk '/^>/ {print($0)}; /^[^>]/ {print(toupper($0))}' genoma_de_referencia.fna | tr -d ' ' > genoma_de_referecia_uppercase.fna
+
+ejemplo:
+
+awk '/^>/ {print($0)}; /^[^>]/ {print(toupper($0))}' '/media/Data/genomas/ncbi_dataset_genoma_humano/data/GCF_000001405.40/GCF_000001405.40_GRCh38.p14_genomic.fna' | tr -d ' ' > genoma_humano_mayusculas_hg38p14.fna
+
+#Crea una carpeta para el mapeo con ambos genomas
+mkdir mapeo_lagartija
+
+#Para importar el genoma de referencia
+
+qiime tools import \
+  --input-path genome_referencia.fna \
+  --output-path genome_de_referencia.qza \
+  --type 'FeatureData[Sequence]'
+  
+#Para construir el index del genoma de referencia
+qiime quality-control bowtie2-build
+--i-sequences genome_de_referencia.qza\
+--p-n-threads 16
+--o-database genome_de_referencia_index.qza
+
+#nota: se construye index por cada genoma
+  
+```
+
+b. Importar las secuencias de trabajo que estan en formato fastq
+
+```{bash, eval=FALSE}
+
+#Para importar las secuencias fastq
+
+qiime tools import \
+  --input-path manifest.csv \
+  --type 'SampleData[PairedEndSequencesWithQuality]' \
+  --input-format PairedEndFastqManifestPhred33 \
+  --output-path seqs_paired_end.qza'
+  
+```
+
+En este caso es necesario importar las secuencias a través de un archivo manifest el cuál se puede crear usando el código que viene en este [**video**](https://youtu.be/_0gBjbvQCQ4?si=GesPUGjXb42yWkUC)
+
+c. Filtrar las secuencias del genoma de referencia
+
+```{bash, eval=FALSE}
+
+#Para filtrar las secuencias del genoma de referencia de los archivos fastq de las muestras
+
+qiime quality-control filter-reads \
+  --i-demultiplexed-sequences seqs_paired_end.qza \
+  --i-database genome_de_referencia_index.qza \
+  --p-n-threads 16 \
+  --o-filtered-sequences seqs_filtered.qza'
+  
+#nota: por default tiene la siguiente opción como True que es para quitar las secuencias que mapearon con el genoma de referencia, en caso de que esas seqs se quieran conservar, cambiar esta opción por False:  --p-exclude-seqs
+
+```
+
+d. Exportar las secuencias del artefacto qza de qiime2
+
+```{bash, eval=FALSE}
+
+#Para obtener los archivos en formato fastq del artefacto de qza de qiime2 utilizar el siguiente código
+
+qiime tools export \
+  --input-path seqs_filtered.qza \
+  --output-path seqs_filtered \
+  
+```
+
+## Paso 4. Remoción de adaptadores y filtro de calidad
+
+Una vez que tenemos las secuencias que no mapearon con ambos genomas: humano y hospedero (para este caso lagartija), hay que hacer la remoción de adaptadores y filtrado de calidad con Trimmomatic, sino lo tienes instalado da click en el siguiente enlace y sigue las instrucciones:
+
+[**Trimmomatic**](http://www.usadellab.org/cms/?page=trimmomatic)
+
+```{bash, eval=FALSE}
+
+#Crea una carpeta para el filtrado de calidad dentro de la carpeta nombre_proyecto
+
+mkdir trimmomatic_26_41
+
+#Ingresa a la carpeta
+cd trimmomatic_26_41
+
+#Crea una liga simbólica a la carpeta que contiene los últimos mapeos
+
+ln -s /ruta/mapeo_lagartija/seqs_filtered_no_sceloundu__no_human_local_sensitive_26_41
+
+#Utiliza el siguiente código para cada archivo que contiene las secuencias que no mapearon con ambos genomas: humano y hospedero (para este caso lagartija)
+
+nohup java -jar trimmomatic-0.39.jar PE -phred33 seqs_filtered_no_sceloundu__no_human_local_sensitive_26_41/101_0_L001_R1_001.fastq.gz seqs_filtered_no_sceloundu__no_human_local_sensitive_26_41/101_1_L001_R2_001.fastq.gz 101.26FP17-I_bowtie_local_sensitive_suhg38_R1_paired.fastq 101.26FP17-I_bowtie_local_sensitive_suhg38_R1_unpaired.fastq 101.26FP17-I_bowtie_local_sensitive_suhg38_R2_paired.fastq 101.26FP17-I_bowtie_local_sensitive_suhg38_R2_unpaired.fastq ILLUMINACLIP:Trimmomatic-0.39/adapters/NexteraPE-PE.fa:2:30:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:20 MINLEN:30
+```
+
+**Importante:**
+
+Para este paso ya se debe de tener el mapeo de la lectura R1 y R2 de cada muestra, ya que se utilizaran en el mismo código para detectar las secuencias que no mapean entre forward (R1) y reverse (R2).
+
+**PE:** para secuencias paired-end
+
+**phred33:** formato de calidad (depende de la plataforma de secuenciación)
+
+**ILLUMINACLIP:** ruta de la carpeta donde se encuentran los adaptadores,
+
+**LEADING:** recortar bases de baja calidad al comiendo de la lectura
+
+**TRAILING:** recortar bases de baja calidad al fina de la lectura
+
+**SLIDINGWINDOW:** recortar bases de baja calidad (menor a 20) en ventanas de 4 pb
+
+**MINLEN:** eliminar lecturas más pequeñas que 30 pb
+
+**Archivos de salida:** secuencias que parearon entre forward y reverse (nombre_paired.fastq) y secuencias que no parearon entre ellas (nombre_unpaired.fastq)
+
+## Paso 4.1. Revisar la remocion de adaptadores en Fastqc
+
+Con los archivos de salida del código anterior, por ejempelo R1_paired.fastq  revisa que ya no contenga adaptadores en Fastqc
+
+Para línea de comandos utiliza el siguiente código:
+
+```{bash, eval=FALSE}
+Fastqc nombre_archivo_R1_paired.fastq.gz
+```
+
+Nota: este paso se realiza para cada archivo.fastq de cada muestra, en caso de ser secuencias paired-end, se realiza tanto para el R1 como el R2 tanto paired como unpaired.
+
+## Paso 5. Ensamble o Coensamble de secuencias
+
+Una vez realizado el filtro de calidad con remoción de adaptadores, se debe realizar el ensamble o coensamble de las secuencias con Megahit, en caso de no tenerlo instalado dar click en el siguiente enlace y sigue las instrucciones.
+
+[**Megahit**](https://github.com/voutcn/megahit)
+
+**Importante:**
+Para el caso del binning donde lo que se busca es ensamblar genomas a partir de secuencias de metagenoma se puede realizar un coemsamble (es decir ensamblar archivos de varias muestras) de las secuencias para aumentar la profundidad y cobertura de secuenciación. Es muy importante realizarlo de muestras que compartan similitudes como puede ser réplicas, mismo individuo, misma zona de muestreo, misma fecha y mismo individio, etc. debido a que tratar de coensamblar muestras diferentes puede resultar en un pobre ensa,blaje debido a la variación entre las comunidades microbianas de las muestras.
+
+Para este ejemplo se coensamblan las muestras provenientes de lagartijas machos
+
+```{bash, eval=FALSE}
+
+#Activa megahit (recuerda que esta en un ambiente conda)
+conda activate megahit1
+
+#Crea una liga simbólica a la carpeta que contiene las lecturas filtradas por calidad
+
+ln -s /ruta/trimmomatic_26_41
+
+#Realiza el coensamble de lecturas que parearon y no parearon entre ellas
+nohup megahit -1 ../trimmomatic_26_41/113.26M6-I_bowtie_local_sensitive_suhg38_R1_paired.fastq,../trimmomatic_26_41/125.26M2-I_bowtie_local_sensitive_suhg38_R1_paired.fastq,../trimmomatic_26_41/137.26M14-I_bowtie_local_sensitive_suhg38_R1_paired.fastq,../trimmomatic_26_41/138.41M11-I_bowtie_local_sensitive_suhg38_R1_paired.fastq,../trimmomatic_26_41/149.26M19-I_bowtie_local_sensitive_suhg38_R1_paired.fastq,../trimmomatic_26_41/150.41M12-I_bowtie_local_sensitive_suhg38_R1_paired.fastq,../trimmomatic_26_41/161.26M4-I_bowtie_local_sensitive_suhg38_R1_paired.fastq,../trimmomatic_26_41/162.41M13-I_bowtie_local_sensitive_suhg38_R1_paired.fastq,../trimmomatic_26_41/174.41M14-I_bowtie_local_sensitive_suhg38_R1_paired.fastq,../trimmomatic_26_41/186.41M15-I_bowtie_local_sensitive_suhg38_R1_paired.fastq-2 ../trimmomatic_26_41/113.26M6-I_bowtie_local_sensitive_suhg38_R2_paired.fastq,../trimmomatic_26_41/125.26M2-I_bowtie_local_sensitive_suhg38_R2_paired.fastq,../trimmomatic_26_41/137.26M14-I_bowtie_local_sensitive_suhg38_R2_paired.fastq,../trimmomatic_26_41/138.41M11-I_bowtie_local_sensitive_suhg38_R2_paired.fastq,../trimmomatic_26_41/149.26M19-I_bowtie_local_sensitive_suhg38_R2_paired.fastq,../trimmomatic_26_41/150.41M12-I_bowtie_local_sensitive_suhg38_R2_paired.fastq,../trimmomatic_26_41/161.26M4-I_bowtie_local_sensitive_suhg38_R2_paired.fastq,../trimmomatic_26_41/162.41M13-I_bowtie_local_sensitive_suhg38_R2_paired.fastq,../trimmomatic_26_41/174.41M14-I_bowtie_local_sensitive_suhg38_R2_paired.fastq,../trimmomatic_26_41/186.41M15-I_bowtie_local_sensitive_suhg38_R2_paired.fastq -o megahit_coassembly_male -t 40
+```
+
+**Importante:**
+
+**1:** secuencias que parearon del R1
+
+**2:** secuencias que parearon del R2
+
+Separas los archivos con una coma, primero se escriben las R1 y luego las R2
+
+**-t** número de threads
+
+**-o** nombre de la carpeta que contiene los archivos de salida
+
+Nota: en esta carpeta se generan varios archivos, el que se ocupa para el siguiente paso es el que se llama final.contigs.fa 
+
+## Paso 6. Mapeo de lecturas con el coensamble
+
+Este se realiza con Bowtie2 para obtener los archivos .bam que se usarán posteriormetne al mometno de realizar el binning.
+
+EL index se construye con los contigs generados en el paso anterior (final.contigs.fa)
+
+```{bash, eval=FALSE}
+
+#Construir el index con los final_contigs del coensamble
+ bowtie2-build megahit_coassembly_male/final.contigs.fa assembly_index_macho
+
+#Nota: va a generar varios archivos de index, solo hay que poner el prefijo de como se llama y bowtie va a usar todos para el siguiente paso
+
+#mapeo del index del coensamble con cada muestra
+nohup bowtie2 -q -x assembly_index_macho -1 ../seqs_filtered_no_sceloundu__no_human_local_sensitive_26_41/101_0_L001_R1_001.fastq.gz -2 ../seqs_filtered_no_sceloundu__no_human_local_sensitive_26_41/101_1_L001_R2_001.fastq.gz --no-unal -p 40 -S sample_machos.sam
+
+#convertir de sam a bam
+samtools view -b -o Sample_A-raw.bam sample_machos.sam
+
+#sortear e indexar el bam
+samtools sort -o Sample_A.bam Sample_A-raw.bam
+
+samtools index Sample_A.bam
+
+```
+
+## Paso 7. Hacer el binnig
+
+Para hacer el binnig, es necesario realizarlo con más de una herramienta bioinformática para unir los bins formados con cada una y aumentar la calidad del bin obtenido.
+
+Tres de las herramientas bioinformáticas más utilzadas son MetaBat, Maxbin y Concoct
+
+#### **Hacer el binnig con MetaBat**
+
+
+```{bash, eval=FALSE}
+
+#Activa MetaBat (recuerda que esta en un ambiente conda)
+conda activate metabat2
+
+#calcular la cobertura para cada muestra
+jgi_summarize_bam_contig_depths --outputDepth htn-depth_125.txt Sample_125.bam
+
+#obtener los bins
+metabat -i megahit_coassembly_male/final.contigs.fa -a htn-depth_125.txt -o results/bins_125  --saveCls --minCV 0.1 -m 2000
+```
+
+#### **Hacer el binnig con Maxbin**
+
+```{bash, eval=FALSE}
+
+#Activa Maxbin (recuerda que esta en un ambiente conda)
+conda activate maxbin_env
+
+#obtener los bins para cada muestra
+run_MaxBin.pl -contig megahit_coassembly_male/final.contigs.fa -out results/maxbin_125 -abund htn-depth_125.txt
+
+#nota: usar el archivo htn-depth.txt que se generó con Metabat
+
+```
+
+
+#### **Hacer el binnig con Concoct**
+
+```{bash, eval=FALSE}
+
+#Activa Concoct (recuerda que esta en un ambiente conda)
+conda activate concoct_env
+
+#fragmentar los contigs
+cut_up_fasta.py megahit_coassembly_male/final.contigs.fa -o 0 --merge_last -b results/SplitAssembly-htn.bed > results/htn.fasta-split10K.fa
+
+#Calcular la cobertura
+
+nohup concoct_coverage_table.py results/SplitAssembly-htn.bed Sample_101.bam Sample_102.bam Sample_114.bam Sample_124.bam Sample_126.bam Sample_136.bam Sample_148.bam Sample_160.bam Sample_172.bam Sample_173.bam Sample_184.bam Sample_185.bam Sample_189.bam > results/concoct_coverage_table_htn.tsv
+
+#Nota: para generar el archivo htn.tsv que contenga los datos de cobertura de todas las muestras, se escriben los nombres de todos los archvios bam
+
+#Obtener los bins
+
+nohup concoct -t 40 --coverage_file results/concoct_coverage_table_htn.tsv --composition_file results/htn.fasta-split10K.fa --basename concot --iterations 500 -b concoct_output/
+
+#Combinar los contigs
+
+nohup merge_cutup_clustering.py concoct_output/clustering_gt1000.csv > concoct_output/merged-htn-gt1000.csv
+
+#extraer los bins en archivos fasta individuales 
+
+mkdir concoct_output/fasta_bins
+
+extract_fasta_bins.py megahit_coassembly_male/final.contigs.fa concoct_output/merged-htn-gt1000.csv --output_path concoct_output/fasta_bins
+
+#nota: se utilozan los final.contigs.fa del coensmable
+
+```
+
+## Paso 7. Integrar los bins de MetaBat, maxbin y Concoct con DAS Tool
+
+
+```{bash, eval=FALSE}
+
+#Activa DAS Tool (recuerda que esta en un ambiente conda)
+conda activate dastool
+
+#dastool machos de maxbin
+Fasta_to_Contig2Bin.sh -i results/maxbin -e fasta > maxbin_scaffolds2bin.tsv
+
+#dastool machos de metabat
+Fasta_to_Contig2Bin.sh -i results/metabat -e fa > metabat_scaffolds2bin.tsv
+
+#dastool machos de concoct
+Fasta_to_Contig2Bin.sh -i concoct_output/fasta_bins -e fa > concoct_scaffolds2bin.tsv
+
+#dastool machos de concoct-metabat-maxbin
+DAS_Tool -i maxbin_scaffolds2bin.tsv,metabat_scaffolds2bin.tsv,concoct_scaffolds2bin.tsv -l maxbin,metabat,concoct -c megahit_coassembly_male/final.contigs.fa -o results/htn_bins_DASTool_male -t 40  --search_engine diamond --write_bins
+
+```
+
+Nota: en las opciones -e para maxbin se usa fasta porque esa herramienta genera archivos con extensión .fasta eb lugar de .fa como en metabat y concoct
+
+## Paso 8. Evaluar la calidad de los genomas recuperados con CheckM
+
+
+```{bash, eval=FALSE}
+
+checkm  lineage_wf -t 40 -x fa /results/htn_bins_DASTool_male DAStools-log_htn  -f CheckM-DAS_Tool_bins_machos.tx
+
+```
+
+Nota: este archivo tiene los datos de los bins obtenidos con el porcentaje de completitud, el porcentaje de contaminación entre otros datos.
+
+## Paso 9. Evaluar la calidad de los genomas recuperados con CheckM
+
+
+```{bash, eval=FALSE}
+
+checkm  lineage_wf -t 40 -x fa /results/htn_bins_DASTool_male DAStools-log_htn  -f CheckM-DAS_Tool_bins_machos.tx
+
+```
